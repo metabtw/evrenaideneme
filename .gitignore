@@ -1,0 +1,57 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Sanal ortam ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Sırlar (ASLA commit edilmez) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Model ağırlıkları ve önbellek ---
+*.pt
+*.onnx
+*.engine
+models/
+.cache/
+.ultralytics/
+
+# --- Çalışma zamanı çıktıları ---
+logs/
+reports/
+captures/
+recordings/
+*.log
+*.mp4
+*.avi
+*.mp3
+*.wav
+
+# --- Test / araçlar ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Editör / işletim sistemi ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
