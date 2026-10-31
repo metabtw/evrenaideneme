@@ -54,12 +54,18 @@ def test_build_prompt_validation() -> None:
         build_prompt(AnalysisMode.COUNT)
 
 
-def test_vlm_client_is_explicitly_unavailable() -> None:
-    client = create_vlm_client()
-    assert "hazır değil" in client.name
-    with pytest.raises(VLMUnavailableError, match="M2"):
-        client.describe(b"jpeg", "açıkla")
-    client.close()
+def test_create_vlm_client_picks_provider() -> None:
+    from app.config import VLMSettings
+
+    ollama = create_vlm_client(VLMSettings(provider="ollama", model="llava:7b"))
+    assert ollama.name == "ollama:llava:7b"
+
+    # Bulut sağlayıcı anahtarsız oluşturulamaz: uygulama düşmez, yer tutucu döner.
+    placeholder = create_vlm_client(VLMSettings(provider="openai-compatible"))
+    assert placeholder.name == "vlm:yok"
+    with pytest.raises(VLMUnavailableError, match="VLM_API_BASE"):
+        placeholder.describe(b"jpeg", "açıkla")
+    placeholder.close()
 
 
 def test_null_speech_engine() -> None:

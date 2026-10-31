@@ -20,9 +20,9 @@ açıklama yapan bir asistana dönüştürmek. Her şey yerelde, Türkçe ve dü
 
 | Faz | Ad | Çıktı | Durum |
 | --- | --- | --- | --- |
-| M0 | Temel iskelet | Depo, README, ROADMAP, config, CI | 🟢 Tamam (CONTRIBUTING hariç) |
+| M0 | Temel iskelet | Depo, README, ROADMAP, config, CI | 🟢 Tamam |
 | M1 | Canlı tespit | YOLOv8 + webcam + HUD, 30 FPS | 🟡 Kod hazır |
-| M2 | Derin analiz | Ollama VLM istemcisi + Türkçe prompt | ⬜ |
+| M2 | Derin analiz | Ollama VLM istemcisi + Türkçe prompt | 🟡 Kod hazır |
 | M3 | Sesli geri bildirim | pyttsx3/gTTS motorları | ⬜ |
 | M4 | Orkestrasyon | Thread'ler, kuyruklar, dayanıklılık | ⬜ |
 | M5 | Ürünleşme | UX, paketleme, ölçüm raporu | ⬜ |
@@ -46,7 +46,7 @@ açıklama yapan bir asistana dönüştürmek. Her şey yerelde, Türkçe ve dü
 - [x] `app/utils/logging.py`: konsol + döner dosya logu
 - [x] `pytest` kurulumu ve ilk testler (`test_config.py`)
 - [x] GitHub Actions: `ruff` + `pytest` (Python 3.11/3.12 matrisi)
-- [ ] `CONTRIBUTING.md` ve commit kuralı (Conventional Commits)
+- [x] `CONTRIBUTING.md` ve commit kuralı (Conventional Commits)
 
 **Kabul kriteri:** `git clone` → `pip install -r requirements.txt` → `pytest` yeşil;
 `.env` yokken uygulama anlaşılır hata verir, çökmez.
@@ -93,22 +93,34 @@ Kutular ve Türkçe etiketler doğru çizildi (`kişi`, `sandalye`).
 
 **Hedef:** Tek kareyi yerel modele gönderip Türkçe, kullanılabilir yanıt almak.
 
-- [ ] `analysis/vlm_client.py`
+- [x] `analysis/vlm_client.py`
   - `OllamaClient`: `POST /api/generate`, `images: [base64]`, `stream: false`
   - `OpenAICompatibleClient`: `/v1/chat/completions` (opsiyonel bulut)
   - Ortak arayüz: `describe(frame_jpeg: bytes, prompt: str) -> str`
   - Zaman aşımı, yeniden deneme (2, üstel geri çekilme), anlamlı hata tipleri
-- [ ] `utils/frames.py`: `encode_jpeg(frame, quality=85)`, boyut küçültme (max 1024 px)
-- [ ] `analysis/prompts.py`: Türkçe şablonlar
+  - `health_check()`: model kurulu değilse `ollama pull ...` yönlendirmesi
+- [x] `utils/frames.py`: `encode_jpeg(frame, quality=85)`, boyut küçültme (max 1024 px)
+- [x] `analysis/prompts.py`: Türkçe şablonlar
   - `DESCRIBE`: "Sahneyi 3 cümlede Türkçe açıkla; nesneleri ve konumlarını belirt."
   - `OCR`: "Görseldeki tüm metni olduğu gibi yaz, yorum ekleme."
   - `COUNT`: "Şu nesneden kaç tane var? Sadece sayı ve kısa gerekçe."
   - Model kimliğine göre şablon seçimi (`llava` vs `qwen2.5vl`)
-- [ ] Ollama yoksa/ model yoksa: kurulum yönlendirmesi (`ollama pull ...`)
-- [ ] Testler: sahte HTTP sunucusu ile istemci sözleşmesi; prompt snapshot testi
+- [x] `analysis/worker.py`: tek uçuş (single-flight) + latest-frame-wins işçi
+- [x] `app/analyze.py`: `--image`, `--mode`, `--target`, `--check`, `--json` CLI
+- [x] `main.py`: `s`/`o` tuşları gerçek analizi tetikler, `--analyze-every`,
+  `--vlm-model`, `--no-vlm` bayrakları
+- [x] Ollama yoksa/ model yoksa: kurulum yönlendirmesi (`ollama pull ...`)
+- [x] Testler: sahte HTTP oturumu ile istemci sözleşmesi; prompt snapshot testi
 
 **Kabul kriteri:** `python -m app.analyze --image ornek.jpg` çalışır; 7B model GPU'da
 < 5 sn, CPU'da < 15 sn yanıt verir; Türkçe yanıt akıcı.
+
+**Durum notu (M2):** Kod tamam ve gerçek Ollama + `llava:7b` ile doğrulandı.
+50 sn'lik canlı koşuda 8 analiz tamamlandı, **kamera akışı 28.5 FPS'te sabit
+kaldı** (analiz sırasında tek kare bile düşmedi). CPU'da ilk yanıt ~45 sn
+(model soğuk), sonraki yanıtlar **~3.1–3.9 sn** (model bellekte sıcak).
+Türkçe kalite: `llava:7b` dilbilgisi olarak zayıf (halen ROADMAP riski);
+`qwen2.5vl:7b` önerilir.
 
 **Riskler:** Model VRAM'i aşarsa yavaşlar; `llava` Türkçede zayıf kalabilir.
 → Varsayılan `qwen2.5vl:7b`, alternatif `llava:7b`; model seçimi `.env`'de.

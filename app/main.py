@@ -5,10 +5,11 @@
     python -m app.main                 # canlı kamera + YOLO + HUD
     python -m app.main --list-cameras  # erişilebilir kamera indeksleri
     python -m app.main --no-gui        # başsız (CI / SSH) mod
+    python -m app.main --no-gui --duration 10 --analyze-every 5
 
-Mimari not: Kamera ve tespit ayrı thread'lerde çalışır. Ana thread yalnızca
-en son kareyi okur, son tespit sonucunu çizer ve tuşları işler; hiçbir ağır iş
-ana döngüyü bloklamaz.
+Mimari not: Kamera, tespit ve Vision LLM analizi ayrı thread'lerde çalışır.
+Ana thread yalnızca en son kareyi okur, sonuçları çizer ve tuşları işler;
+hiçbir ağır iş (YOLO çıkarımı, JPEG kodlama, HTTP isteği) ana döngüyü bloklamaz.
 """
 
 from __future__ import annotations
@@ -18,7 +19,10 @@ import sys
 import time
 from dataclasses import replace
 
+import numpy as np
+
 from app import __version__
+from app.analysis import AnalysisMode, AnalysisResult, AnalysisWorker, create_vlm_client
 from app.camera import CameraError, CameraStream, list_cameras
 from app.config import Settings, get_settings
 from app.detection import DetectionWorker, ObjectDetector
@@ -28,6 +32,9 @@ from app.ui import draw_hud, latest_labels
 from app.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
+
+#: Hata rozetinin ekranda kalma süresi (saniye).
+ERROR_DISPLAY_SECONDS = 6.0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,6 +63,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Belirtilen saniye sonra otomatik çık (0 = sonsuz)",
     )
     parser.add_argument(
+        "--analyze-every",
+        type=float,
+        default=0.0,
+        help="Her N saniyede bir otomatik analiz tetikle (0 = kapalı)",
+    )
+    parser.add_argument(
+        "--vlm-model",
+        help="Vision model adını geçersiz kıl (örn. qwen2.5vl:7b)",
+    )
+    parser.add_argument(
+        "--no-vlm",
+        action="store_true",
+        help="Vision LLM'i devre dışı bırak (yalnızca tespit modu)",
+    )
+    parser.add_argument(
         "--log-level",
         choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
         help="Log seviyesini geçersiz kıl",
@@ -66,6 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _apply_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
     camera = settings.camera
     detection = settings.detection
+    vlm = settings.vlm
     log = settings.log
 
     if args.camera_index is not None:
@@ -76,10 +99,12 @@ def _apply_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
         if not 0.0 <= args.confidence <= 1.0:
             raise SystemExit("--confidence 0.0 ile 1.0 arasında olmalı")
         detection = replace(detection, confidence=args.confidence)
+    if args.vlm_model:
+        vlm = replace(vlm, model=args.vlm_model, api_model="")
     if args.log_level:
         log = replace(log, level=args.log_level)
 
-    return replace(settings, camera=camera, detection=detection, log=log)
+    return replace(settings, camera=camera, detection=detection, vlm=vlm, log=log)
 
 
 def _import_cv2():
@@ -128,6 +153,56 @@ def main(argv: list[str] | None = None) -> int:
     camera = CameraStream(settings.camera)
     cv2 = None if args.no_gui else _import_cv2()
 
+    # --- analiz katmanı (M2) ---------------------------------------------
+    analysis: AnalysisWorker | None = None
+    error_at = [0.0]
+
+    def on_analysis_result(result: AnalysisResult) -> None:
+        state.set_answer(result.answer)
+        state.set_status(AppStatus.CAPTURING)
+        if not args.no_gui:
+            logger.info("Yanıt hazır (%.0f ms)", result.elapsed_ms)
+
+    def on_analysis_error(message: str) -> None:
+        error_at[0] = time.monotonic()
+        state.set_error(message)
+
+    if not args.no_vlm:
+        ready, message = _check_vlm(settings)
+        if ready:
+            analysis = AnalysisWorker(
+                create_vlm_client(settings.vlm),
+                model=settings.vlm.model,
+                on_result=on_analysis_result,
+                on_error=on_analysis_error,
+            ).start()
+            logger.info("Vision LLM hazır: %s", message)
+        else:
+            logger.warning("Vision LLM devre dışı — %s", message)
+            state.set_answer(f"Vision LLM kapalı: {message}")
+
+    next_auto = time.monotonic() + args.analyze_every if args.analyze_every > 0 else float("inf")
+
+    def trigger(frame: np.ndarray, mode: AnalysisMode = AnalysisMode.DESCRIBE) -> None:
+        """Analizi tek uçuş kuralıyla tetikler (ana döngüyü bloklamaz)."""
+        if analysis is None:
+            state.set_answer(
+                "Vision LLM kapalı. Etkinleştirmek için .env içinde OLLAMA_MODEL ayarlayın."
+            )
+            return
+        if analysis.is_busy:
+            state.set_answer("Analiz sürüyor, lütfen bekleyin…")
+            logger.info("Analiz isteği yok sayıldı: meşgul")
+            return
+        analysis.submit(frame, mode=mode)
+        state.set_status(AppStatus.ANALYZING)
+        labels = worker.latest_result()
+        logger.info(
+            "Analiz tetiklendi (mod=%s): %s",
+            mode.value,
+            latest_labels(labels.labels()) if labels else "nesne yok",
+        )
+
     exit_code = 0
     started = time.monotonic()
     frames = 0
@@ -153,6 +228,18 @@ def main(argv: list[str] | None = None) -> int:
             state.set_detections(len(detections), result.inference_ms if result else 0.0)
             state.set_fps(camera.fps)
 
+            # Otomatik tetikleme: akış sürerken belirli aralıkla analiz.
+            now = time.monotonic()
+            if now >= next_auto:
+                next_auto = now + args.analyze_every
+                if analysis is not None and not analysis.is_busy:
+                    trigger(frame)
+
+            # Hata rozeti bir süre sonra kendiliğinden kaybolur.
+            snapshot = state.snapshot()
+            if snapshot.status is AppStatus.ERROR and now - error_at[0] > ERROR_DISPLAY_SECONDS:
+                state.clear_error()
+
             if cv2 is not None:
                 draw_detections(frame, detections)
                 snapshot = state.snapshot()
@@ -176,10 +263,16 @@ def main(argv: list[str] | None = None) -> int:
                     enabled = state.toggle_tts()
                     logger.info("Sesli yanıt: %s", "açık" if enabled else "kapalı")
                 if key == ord(settings.ui.trigger_key):
-                    note = "Analiz M2 fazında eklenecek."
-                    state.set_answer(note)
-                    labels = result.labels() if result else []
-                    logger.info("Analiz tetiklendi: %s", latest_labels(labels) or "nesne yok")
+                    trigger(frame, AnalysisMode.DESCRIBE)
+                if key == ord("o"):
+                    trigger(frame, AnalysisMode.OCR)
+                if key == ord("c"):
+                    state.clear_answer()
+                if key == ord("p"):
+                    last = analysis.latest_result() if analysis else None
+                    if last is not None:
+                        state.set_answer(last.answer)
+                        logger.info("Son yanıt tekrar gösteriliyor")
             else:
                 labels = result.labels() if result else []
                 if frames % 30 == 0:
@@ -203,20 +296,43 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         worker.stop(timeout=3.0)
         camera.stop()
+        if analysis is not None:
+            analysis.stop(timeout=5.0)
         if cv2 is not None:
             cv2.destroyAllWindows()
 
     elapsed = max(time.monotonic() - started, 1e-6)
     stats = worker.stats
+    analysis_stats = analysis.stats if analysis is not None else {}
     logger.info(
-        "Özet: %.1f sn, %s kare, ortalama %.1f FPS, %s tespit işlendi, %s kare düşürüldü",
+        "Özet: %.1f sn, %s kare, ortalama %.1f FPS, %s tespit işlendi, "
+        "%s kare düşürüldü, %s analiz tamamlandı",
         elapsed,
         frames,
         frames / elapsed,
         stats.processed,
         stats.dropped,
+        analysis_stats.get("completed", 0),
     )
     return exit_code
+
+
+def _check_vlm(settings: Settings) -> tuple[bool, str]:
+    """Ollama hazır mı? Hazır değilse kullanıcıya eyleme dönük mesaj verir."""
+    if settings.vlm.provider != "ollama":
+        try:
+            create_vlm_client(settings.vlm)
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc)
+        return True, f"{settings.vlm.provider}:{settings.vlm.model}"
+
+    from app.analysis import OllamaClient  # noqa: PLC0415 - yalnızca burada gerekli
+
+    client = OllamaClient(settings.vlm)
+    try:
+        return client.health_check()
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":  # pragma: no cover

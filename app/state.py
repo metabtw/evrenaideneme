@@ -94,6 +94,23 @@ class AppState:
                 updated_at=time.time(),
             )
 
+    def clear_error(self) -> None:
+        """Hata mesajını siler ve durumu akışa döndürür (rozet sıfırlama)."""
+        with self._lock:
+            self._snapshot = replace(
+                self._snapshot,
+                last_error="",
+                status=AppStatus.CAPTURING,
+                updated_at=time.time(),
+            )
+
+    def clear_answer(self) -> None:
+        """Son yanıtı temizler (``c`` tuşu)."""
+        with self._lock:
+            self._snapshot = replace(
+                self._snapshot, last_answer="", last_error="", updated_at=time.time()
+            )
+
     def set_tts_enabled(self, enabled: bool) -> None:
         with self._lock:
             self._snapshot = replace(self._snapshot, tts_enabled=enabled)

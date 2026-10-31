@@ -278,6 +278,19 @@ python -m app.main --list-cameras            # erişilebilir kamera indeksleri
 python -m app.main --camera-index 1          # farklı kamera
 python -m app.main --confidence 0.5          # daha katı tespit eşiği
 python -m app.main --no-gui --duration 10    # penceresiz 10 sn (CI/donanım testi)
+python -m app.main --analyze-every 30        # her 30 sn'de bir otomatik analiz
+python -m app.main --vlm-model qwen2.5vl:7b  # farklı görsel model
+python -m app.main --no-vlm                  # yalnızca tespit modu
+```
+
+### Tek görsel analizi (kamera açmadan)
+
+```bash
+python -m app.analyze --check                      # Ollama + model hazır mı?
+python -m app.analyze --image ornek.jpg            # sahneyi Türkçe açıkla
+python -m app.analyze --image ekran.png --mode ocr # yalnızca metni oku
+python -m app.analyze --image mutfak.jpg --mode count --target bardak
+python -m app.analyze --image kare.jpg --json      # makine okunur çıktı
 ```
 
 ---
@@ -291,6 +304,7 @@ evrenaideneme/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                 # Giriş noktası, döngü, tuş yönetimi, CLI
+│   ├── analyze.py              # Tek görsel analizi CLI (--image, --check)
 │   ├── state.py                # Kilitli paylaşılan durum (AppState)
 │   ├── config/
 │   │   └── settings.py         # .env -> dataclass ayarlar + doğrulama
@@ -302,8 +316,9 @@ evrenaideneme/
 │   │   ├── worker.py           # Ayrı thread, latest-frame-wins
 │   │   └── labels.py           # COCO -> Türkçe sınıf adları
 │   ├── analysis/
-│   │   ├── vlm_client.py       # Ollama / OpenAI uyumlu istemci (M2)
-│   │   └── prompts.py          # Türkçe prompt şablonları
+│   │   ├── vlm_client.py       # Ollama / OpenAI uyumlu istemci
+│   │   ├── prompts.py          # Türkçe prompt şablonları
+│   │   └── worker.py           # Tek uçuş + latest-frame-wins analiz işçisi
 │   ├── tts/
 │   │   ├── base.py             # SpeechEngine protokolü
 │   │   ├── null_engine.py      # Sessiz motor
@@ -320,11 +335,15 @@ evrenaideneme/
 │   ├── test_camera_stream.py
 │   ├── test_detector.py
 │   ├── test_worker.py
+│   ├── test_analysis_worker.py
+│   ├── test_vlm_client.py
 │   ├── test_draw_overlay.py
 │   ├── test_text_prompts.py
 │   └── test_main.py
 ├── assets/
 ├── pyproject.toml              # pytest + ruff yapılandırması
+├── CONTRIBUTING.md
+├── LICENSE
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
@@ -359,7 +378,7 @@ edilebilir olması.
 | --- | --- | --- |
 | **M0** | Depo iskeleti, dokümantasyon, yapılandırma | 🟢 Tamam |
 | **M1** | Canlı YOLOv8 tespiti + HUD | 🟡 Kod hazır, donanımda doğrulandı |
-| **M2** | Ollama Vision LLM entegrasyonu | ⬜ Planlandı |
+| **M2** | Ollama Vision LLM entegrasyonu | 🟡 Kod hazır, doğrulandı |
 | **M3** | Türkçe TTS + sesli geri bildirim | ⬜ Planlandı |
 | **M4** | Asenkron orkestrasyon, performans, dayanıklılık | ⬜ Planlandı |
 | **M5** | UX, paketleme, dağıtım | ⬜ Planlandı |
