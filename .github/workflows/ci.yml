@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    name: ruff + pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Bağımlılıkları kur
+        run: |
+          python -m pip install --upgrade pip
+          # CI'da ağır torch/ultralytics kurulmaz; testler sahte model kullanır.
+          pip install numpy python-dotenv pytest pytest-cov ruff
+
+      - name: Lint
+        run: ruff check app tests
+
+      - name: Biçim denetimi
+        run: ruff format --check app tests
+
+      - name: Testler
+        run: pytest --cov=app --cov-report=term-missing

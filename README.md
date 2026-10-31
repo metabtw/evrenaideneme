@@ -226,15 +226,22 @@ python -m app.main
 
 ## Yapılandırma
 
-Tüm ayarlar ortam değişkeni veya `.env` üzerinden okunur (`app/config.py`).
+Tüm ayarlar ortam değişkeni veya `.env` üzerinden okunur
+(`app/config/settings.py`). Geçersiz bir değer, hangi değişkenin bozuk olduğunu
+söyleyen Türkçe bir `ConfigurationError` ile bildirilir.
 
 | Değişken | Varsayılan | Açıklama |
 | --- | --- | --- |
 | `APP_CAMERA_INDEX` | `0` | Webcam indeksi |
 | `APP_FRAME_WIDTH` / `APP_FRAME_HEIGHT` | `1280` / `720` | Yakalama çözünürlüğü |
 | `APP_TARGET_FPS` | `30` | Hedef akış hızı |
+| `APP_BACKEND` | `auto` | `auto`, `dshow`, `msmf`, `avfoundation`, `v4l2` |
 | `APP_MODEL_PATH` | `yolov8n.pt` | YOLO ağırlığı (ilk çalıştırmada indirilir) |
 | `APP_CONFIDENCE` | `0.35` | Tespit güven eşiği |
+| `APP_IOU` | `0.45` | NMS IoU eşiği |
+| `APP_DEVICE` | `auto` | `auto`, `cpu`, `cuda`, `mps` |
+| `APP_MAX_DETECTIONS` | `100` | Kare başına en fazla tespit |
+| `APP_CLASSES` | *(boş)* | Yalnızca bu sınıf kimlikleri (örn. `0,2,16`) |
 | `APP_TRIGGER_KEY` | `s` | Analiz tetik tuşu |
 | `VLM_PROVIDER` | `ollama` | `ollama` veya `openai-compatible` |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama adresi |
@@ -264,6 +271,15 @@ Uygulama açıldığında OpenCV penceresi canlı akışı gösterir.
 Ekranda sağ üstte durum göstergesi bulunur: `HAZIR` → `ANALİZ EDİLİYOR` → `KONUŞUYOR`.
 Analiz sürerken kamera akmaya devam eder.
 
+Yardımcı komutlar:
+
+```bash
+python -m app.main --list-cameras            # erişilebilir kamera indeksleri
+python -m app.main --camera-index 1          # farklı kamera
+python -m app.main --confidence 0.5          # daha katı tespit eşiği
+python -m app.main --no-gui --duration 10    # penceresiz 10 sn (CI/donanım testi)
+```
+
 ---
 
 ## Proje Yapısı
@@ -274,30 +290,41 @@ Hedeflenen modüler yapı (bkz. [ROADMAP.md](ROADMAP.md) Faz 0–1):
 evrenaideneme/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                 # Giriş noktası, döngü, tuş yönetimi
-│   ├── config.py               # .env -> dataclass ayarlar
-│   ├── state.py                # Paylaşılan durum (kilitli)
-│   ├── capture/
-│   │   ├── camera.py           # VideoCapture sarmalayıcı
-│   │   └── detector.py         # YOLOv8 tespit + çizim
+│   ├── main.py                 # Giriş noktası, döngü, tuş yönetimi, CLI
+│   ├── state.py                # Kilitli paylaşılan durum (AppState)
+│   ├── config/
+│   │   └── settings.py         # .env -> dataclass ayarlar + doğrulama
+│   ├── camera/
+│   │   └── stream.py           # Thread tabanlı VideoCapture sarmalayıcı
+│   ├── detection/
+│   │   ├── detector.py         # YOLOv8 tespit (saf veri, çizim yok)
+│   │   ├── draw.py             # Bounding box + etiket çizimi
+│   │   ├── worker.py           # Ayrı thread, latest-frame-wins
+│   │   └── labels.py           # COCO -> Türkçe sınıf adları
 │   ├── analysis/
-│   │   ├── vlm_client.py       # Ollama / OpenAI uyumlu istemci
-│   │   ├── prompts.py          # Türkçe prompt şablonları
-│   │   └── worker.py           # Analiz kuyruğu + thread
-│   ├── speech/
+│   │   ├── vlm_client.py       # Ollama / OpenAI uyumlu istemci (M2)
+│   │   └── prompts.py          # Türkçe prompt şablonları
+│   ├── tts/
 │   │   ├── base.py             # SpeechEngine protokolü
-│   │   ├── pyttsx3_engine.py
-│   │   └── gtts_engine.py
+│   │   ├── null_engine.py      # Sessiz motor
+│   │   ├── pyttsx3_engine.py   # M3 iskeleti
+│   │   └── gtts_engine.py      # M3 iskeleti
 │   ├── ui/
-│   │   └── overlay.py          # HUD, sonuç paneli, durum rozeti
+│   │   └── overlay.py          # HUD, durum rozeti, sonuç paneli
 │   └── utils/
-│       ├── logging.py
-│       └── frames.py           # JPEG/base64 dönüşümleri
+│       ├── logging.py          # Konsol + döner dosya logu
+│       ├── frames.py           # JPEG/base64 dönüşümleri
+│       └── text.py             # ASCII'ye çevirme (cv2.putText sınırı)
 ├── tests/
 │   ├── test_config.py
-│   ├── test_prompts.py
-│   └── test_vlm_client.py
+│   ├── test_camera_stream.py
+│   ├── test_detector.py
+│   ├── test_worker.py
+│   ├── test_draw_overlay.py
+│   ├── test_text_prompts.py
+│   └── test_main.py
 ├── assets/
+├── pyproject.toml              # pytest + ruff yapılandırması
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
@@ -330,8 +357,8 @@ edilebilir olması.
 
 | Faz | Kapsam | Durum |
 | --- | --- | --- |
-| **M0** | Depo iskeleti, dokümantasyon, yapılandırma | 🟡 Devam ediyor |
-| **M1** | Canlı YOLOv8 tespiti + HUD | ⬜ Planlandı |
+| **M0** | Depo iskeleti, dokümantasyon, yapılandırma | 🟢 Tamam |
+| **M1** | Canlı YOLOv8 tespiti + HUD | 🟡 Kod hazır, donanımda doğrulandı |
 | **M2** | Ollama Vision LLM entegrasyonu | ⬜ Planlandı |
 | **M3** | Türkçe TTS + sesli geri bildirim | ⬜ Planlandı |
 | **M4** | Asenkron orkestrasyon, performans, dayanıklılık | ⬜ Planlandı |

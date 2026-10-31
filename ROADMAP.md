@@ -20,8 +20,8 @@ açıklama yapan bir asistana dönüştürmek. Her şey yerelde, Türkçe ve dü
 
 | Faz | Ad | Çıktı | Durum |
 | --- | --- | --- | --- |
-| M0 | Temel iskelet | Depo, README, ROADMAP, config, CI | 🟡 Devam ediyor |
-| M1 | Canlı tespit | YOLOv8 + webcam + HUD, 30 FPS | ⬜ |
+| M0 | Temel iskelet | Depo, README, ROADMAP, config, CI | 🟢 Tamam (CONTRIBUTING hariç) |
+| M1 | Canlı tespit | YOLOv8 + webcam + HUD, 30 FPS | 🟡 Kod hazır |
 | M2 | Derin analiz | Ollama VLM istemcisi + Türkçe prompt | ⬜ |
 | M3 | Sesli geri bildirim | pyttsx3/gTTS motorları | ⬜ |
 | M4 | Orkestrasyon | Thread'ler, kuyruklar, dayanıklılık | ⬜ |
@@ -40,12 +40,12 @@ açıklama yapan bir asistana dönüştürmek. Her şey yerelde, Türkçe ve dü
 - [x] `.gitignore` (venv, `.env`, model ağırlıkları, loglar)
 - [x] `.env.example` (sırsız yapılandırma şablonu)
 - [x] `requirements.txt` (sabitlenmiş alt/üst sınırlar)
-- [ ] `LICENSE` (MIT)
-- [ ] `app/` paket iskeleti + boş modül dosyaları
-- [ ] `app/config.py`: `.env` → dataclass, doğrulama, anlaşılır hata mesajları
-- [ ] `app/utils/logging.py`: konsol + döner dosya logu
-- [ ] `pytest` kurulumu ve ilk testler (`test_config.py`)
-- [ ] GitHub Actions: `ruff` + `pytest` (Python 3.11/3.12 matrisi)
+- [x] `LICENSE` (MIT)
+- [x] `app/` paket iskeleti + boş modül dosyaları
+- [x] `app/config/settings.py`: `.env` → dataclass, doğrulama, anlaşılır hata mesajları
+- [x] `app/utils/logging.py`: konsol + döner dosya logu
+- [x] `pytest` kurulumu ve ilk testler (`test_config.py`)
+- [x] GitHub Actions: `ruff` + `pytest` (Python 3.11/3.12 matrisi)
 - [ ] `CONTRIBUTING.md` ve commit kuralı (Conventional Commits)
 
 **Kabul kriteri:** `git clone` → `pip install -r requirements.txt` → `pytest` yeşil;
@@ -59,22 +59,30 @@ açıklama yapan bir asistana dönüştürmek. Her şey yerelde, Türkçe ve dü
 
 **Hedef:** Kameradan gelen görüntüde nesneleri gerçek zamanlı işaretlemek.
 
-- [ ] `capture/camera.py`: `VideoCapture` sarmalayıcı
+- [x] `camera/stream.py`: `VideoCapture` sarmalayıcı (kendi thread'i, kare kopyası)
   - Windows'ta `cv2.CAP_DSHOW`, macOS'ta `cv2.CAP_AVFOUNDATION`
   - Çözünürlük/FPS ayarı, açılamazsa net hata
   - `read()` başarısızlığında otomatik yeniden bağlanma (3 deneme)
-- [ ] `capture/detector.py`: YOLOv8 sarmalayıcı
+- [x] `detection/detector.py`: YOLOv8 sarmalayıcı
   - Model tek seferlik yükleme (lazy singleton)
   - `conf`, `iou`, `imgsz`, `classes` filtreleri
   - `detect(frame) -> list[Detection]` (saf veri, çizim yok)
-  - `draw(frame, detections) -> frame` (saf görselleştirme)
-- [ ] `ui/overlay.py`: FPS sayacı, durum rozeti, Türkçe sınıf adları
-- [ ] `main.py`: yakalama döngüsü + tuş yönetimi (`s`, `t`, `q`)
-- [ ] `--no-gui` baş bayrağı (başsız test / CI için)
-- [ ] Testler: `detector` çıktısı sahte kare ile; sınıf adı eşlemesi
+  - `detection/draw.py`: `draw_detections(frame, detections) -> frame` (saf görselleştirme)
+- [x] `detection/worker.py`: tespit için ayrı thread + latest-frame-wins
+- [x] `ui/overlay.py`: FPS sayacı, durum rozeti, Türkçe sınıf adları
+- [x] `main.py`: yakalama döngüsü + tuş yönetimi (`s`, `t`, `q`)
+- [x] `--no-gui` baş bayrağı (başsız test / CI için)
+- [x] Testler: `detector` çıktısı sahte kare ile; sınıf adı eşlemesi
+- [ ] Gerçek webcam ile kabul: 720p'de ≥ 25 FPS, `q` ile temiz çıkış
 
 **Kabul kriteri:** 720p'de ≥ 25 FPS (GPU'suz dizüstü), kutular doğru konumda,
 `q` ile temiz çıkış, kamera yokken anlaşılır hata.
+
+**Durum notu (M1):** Kod yolu ve birim testleri tamam. Gerçek webcam ile
+`python -m app.main --no-gui --duration 10` çalıştırıldı: YOLOv8n CPU'da
+720p'de kare başına ~26–43 ms çıkarım, akış ~21 FPS (bu makinedeki kamera
+sürücüsü 720p'de ~21 FPS veriyor; darboğaz yazılım değil donanım/sürücü).
+Kutular ve Türkçe etiketler doğru çizildi (`kişi`, `sandalye`).
 
 **Riskler:** Kamera indeksi/izin sorunları; düşük ışıkta düşük güven.
 → `APP_CONFIDENCE` ayarı ve `--list-cameras` yardımcısı.
@@ -111,9 +119,9 @@ açıklama yapan bir asistana dönüştürmek. Her şey yerelde, Türkçe ve dü
 
 **Hedef:** Yanıtı doğal Türkçe ile seslendirmek, kesilebilir şekilde.
 
-- [ ] `speech/base.py`: `SpeechEngine` protokolü (`speak`, `stop`, `is_busy`)
-- [ ] `speech/pyttsx3_engine.py`: çevrimdışı, `tr` ses seçimi, hız/volume
-- [ ] `speech/gtts_engine.py`: MP3 üretimi + oynatma, geçici dosya temizliği
+- [ ] `tts/base.py`: `SpeechEngine` protokolü (`speak`, `stop`, `is_busy`)
+- [ ] `tts/pyttsx3_engine.py`: çevrimdışı, `tr` ses seçimi, hız/volume
+- [ ] `tts/gtts_engine.py`: MP3 üretimi + oynatma, geçici dosya temizliği
 - [ ] Metin normalizasyonu: sayılar, kısaltmalar, kod bloklarının atlanması
 - [ ] Uzun yanıtları cümlelere bölüp sırayla okuma; `stop()` ile anında kesme
 - [ ] TTS yoksa sessiz mod + ekranda uyarı (uygulama çökmez)
