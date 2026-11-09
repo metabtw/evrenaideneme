@@ -127,6 +127,20 @@ class AnalysisWorker:
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    def set_callbacks(
+        self,
+        *,
+        on_result: ResultCallback | None = None,
+        on_error: ErrorCallback | None = None,
+    ) -> None:
+        """Geri çağrıları (yeniden) bağlar.
+
+        İşçi kurulduktan sonra orkestratörün kancalarını bağlamak için gerekir;
+        özel alanlara dokunmadan aynı işlevi sunar.
+        """
+        self._on_result = on_result
+        self._on_error = on_error
+
     # -- üretici tarafı ----------------------------------------------------
 
     def submit(

@@ -271,7 +271,7 @@ class VLMSettings:
 class TTSSettings:
     """Sesli geri bildirim ayarları (M3)."""
 
-    engine: str = "pyttsx3"
+    engine: str = "pyttsx3-proc"
     language: str = "tr"
     rate: int = 180
     volume: float = 1.0
@@ -279,7 +279,12 @@ class TTSSettings:
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> TTSSettings:
         return cls(
-            engine=_choice(env, "TTS_ENGINE", "pyttsx3", frozenset({"pyttsx3", "gtts", "none"})),
+            engine=_choice(
+                env,
+                "TTS_ENGINE",
+                "pyttsx3-proc",
+                frozenset({"pyttsx3", "pyttsx3-proc", "gtts", "none"}),
+            ),
             language=_str(env, "TTS_LANGUAGE", "tr"),
             rate=_int(env, "TTS_RATE", 180, minimum=50, maximum=400),
             volume=_float(env, "TTS_VOLUME", 1.0, minimum=0.0, maximum=1.0),
@@ -307,6 +312,76 @@ class UISettings:
             show_fps=_bool(env, "APP_SHOW_FPS", True),
             trigger_key=trigger_key,
             hud_enabled=_bool(env, "APP_HUD_ENABLED", True),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialSettings:
+    """Yakınlık / engel uyarısı eşikleri (giyilebilir mod).
+
+    ``critical_ratio``: kutu yüksekliği / kare yüksekliği. Kullanıcı isteğiyle
+    varsayılan 0.60 (ekran dikey alanının %60'ı).
+    """
+
+    critical_ratio: float = 0.60
+    near_ratio: float = 0.35
+    confirm_frames: int = 3
+    announce_cooldown: float = 3.0
+    hazard_only: bool = True
+    hazard_classes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.near_ratio <= 1.0:
+            raise ConfigurationError("SPATIAL_NEAR_RATIO 0 ile 1 arasında olmalı")
+        if not 0.0 < self.critical_ratio <= 1.0:
+            raise ConfigurationError("SPATIAL_CRITICAL_RATIO 0 ile 1 arasında olmalı")
+        if self.critical_ratio < self.near_ratio:
+            raise ConfigurationError("SPATIAL_CRITICAL_RATIO, SPATIAL_NEAR_RATIO'dan küçük olamaz")
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> SpatialSettings:
+        hazard_raw = _str(env, "SPATIAL_HAZARD_CLASSES", "")
+        hazard_classes = (
+            tuple(item.strip() for item in hazard_raw.split(",") if item.strip())
+            if hazard_raw
+            else ()
+        )
+        return cls(
+            critical_ratio=_float(env, "SPATIAL_CRITICAL_RATIO", 0.60, minimum=0.05, maximum=1.0),
+            near_ratio=_float(env, "SPATIAL_NEAR_RATIO", 0.35, minimum=0.01, maximum=1.0),
+            confirm_frames=_int(env, "SPATIAL_CONFIRM_FRAMES", 3, minimum=1, maximum=60),
+            announce_cooldown=_float(env, "SPATIAL_COOLDOWN", 3.0, minimum=0.0, maximum=120.0),
+            hazard_only=_bool(env, "SPATIAL_HAZARD_ONLY", True),
+            hazard_classes=hazard_classes,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class WearableSettings:
+    """Giyilebilir asistan davranışı."""
+
+    start_mode: str = "autopilot"
+    frame_rotation: int = 0
+    speak_on_start: bool = True
+    speak_errors: bool = True
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> WearableSettings:
+        rotation = _int(env, "WEARABLE_ROTATION", 0)
+        if rotation not in (0, 90, 180, 270):
+            raise ConfigurationError(
+                f"WEARABLE_ROTATION 0/90/180/270 olmalı; alınan değer: {rotation}"
+            )
+        return cls(
+            start_mode=_choice(
+                env,
+                "WEARABLE_START_MODE",
+                "autopilot",
+                frozenset({"autopilot", "deep"}),
+            ),
+            frame_rotation=rotation,
+            speak_on_start=_bool(env, "WEARABLE_SPEAK_ON_START", True),
+            speak_errors=_bool(env, "WEARABLE_SPEAK_ERRORS", True),
         )
 
 
@@ -351,6 +426,8 @@ class Settings:
     vlm: VLMSettings = field(default_factory=VLMSettings)
     tts: TTSSettings = field(default_factory=TTSSettings)
     ui: UISettings = field(default_factory=UISettings)
+    spatial: SpatialSettings = field(default_factory=SpatialSettings)
+    wearable: WearableSettings = field(default_factory=WearableSettings)
     log: LogSettings = field(default_factory=LogSettings)
     loaded_env_file: Path | None = None
 
@@ -380,6 +457,8 @@ class Settings:
             vlm=VLMSettings.from_env(merged),
             tts=TTSSettings.from_env(merged),
             ui=UISettings.from_env(merged),
+            spatial=SpatialSettings.from_env(merged),
+            wearable=WearableSettings.from_env(merged),
             log=LogSettings.from_env(merged),
             loaded_env_file=loaded_path,
         )

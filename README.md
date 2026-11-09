@@ -6,6 +6,12 @@ Hızlı nesne tespiti (YOLOv8) ile görsel dil modellerinin (Vision LLM) derin a
 yeteneğini tek bir mimaride birleştiren, tamamen yerelde çalışabilen bir masaüstü
 kamera uygulaması.
 
+> **Giyilebilir mod (deneysel):** Aynı çekirdek, görme engelli bireyler için
+> "akıllı gözlük asistanı" olarak da çalışır — sürekli engel taraması (otopilot),
+> istek üzerine kare dondurup STT/çevre analizi ve sesli geri bildirim.
+> Bkz. [Giyilebilir asistan](#gi̇yi̇lebi̇li̇r-asistan) ve
+> `python -m app.main_wearable`.
+
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/)
 [![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green)](https://opencv.org/)
 [![Ultralytics](https://img.shields.io/badge/Ultralytics-YOLOv8-purple)](https://docs.ultralytics.com/)
@@ -303,7 +309,9 @@ Hedeflenen modüler yapı (bkz. [ROADMAP.md](ROADMAP.md) Faz 0–1):
 evrenaideneme/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                 # Giriş noktası, döngü, tuş yönetimi, CLI
+│   ├── main.py                 # Masaüstü giriş noktası (HUD + tuşlar)
+│   ├── main_wearable.py        # Giyilebilir giriş noktası (otopilot + derin)
+│   ├── wearable.py             # WearableAssistant: mod orkestratörü
 │   ├── analyze.py              # Tek görsel analizi CLI (--image, --check)
 │   ├── state.py                # Kilitli paylaşılan durum (AppState)
 │   ├── config/
@@ -315,17 +323,25 @@ evrenaideneme/
 │   │   ├── draw.py             # Bounding box + etiket çizimi
 │   │   ├── worker.py           # Ayrı thread, latest-frame-wins
 │   │   └── labels.py           # COCO -> Türkçe sınıf adları
+│   ├── spatial/
+│   │   └── analyzer.py         # Kutu sezgisiyle yakınlık/engel uyarısı
+│   ├── modes/
+│   │   ├── autopilot.py        # Mod 1: sürekli tarama (engel + banknot)
+│   │   └── deep.py             # Mod 2: kare dondurma + VLM + STT
 │   ├── analysis/
 │   │   ├── vlm_client.py       # Ollama / OpenAI uyumlu istemci
-│   │   ├── prompts.py          # Türkçe prompt şablonları
+│   │   ├── prompts.py          # Türkçe prompt şablonları (+ EXPIRY)
 │   │   └── worker.py           # Tek uçuş + latest-frame-wins analiz işçisi
 │   ├── tts/
 │   │   ├── base.py             # SpeechEngine protokolü
-│   │   ├── null_engine.py      # Sessiz motor
-│   │   ├── pyttsx3_engine.py   # M3 iskeleti
-│   │   └── gtts_engine.py      # M3 iskeleti
+│   │   ├── service.py          # TextToSpeech: kuyruk, kesme, tekrar bastırma
+│   │   ├── pyttsx3_engine.py   # Thread içi motor
+│   │   ├── subprocess_engine.py# Süreç yalıtımlı motor (GIL koruması)
+│   │   ├── gtts_engine.py      # Bulut TTS (opsiyonel)
+│   │   └── null_engine.py      # Sessiz motor
 │   ├── ui/
-│   │   └── overlay.py          # HUD, durum rozeti, sonuç paneli
+│   │   ├── overlay.py          # Masaüstü HUD
+│   │   └── wearable_hud.py     # Gözlük HUD (minimal, yüksek kontrast)
 │   └── utils/
 │       ├── logging.py          # Konsol + döner dosya logu
 │       ├── frames.py           # JPEG/base64 dönüşümleri
@@ -337,6 +353,10 @@ evrenaideneme/
 │   ├── test_worker.py
 │   ├── test_analysis_worker.py
 │   ├── test_vlm_client.py
+│   ├── test_spatial.py
+│   ├── test_modes.py
+│   ├── test_tts_service.py
+│   ├── test_wearable.py
 │   ├── test_draw_overlay.py
 │   ├── test_text_prompts.py
 │   └── test_main.py
@@ -354,6 +374,43 @@ evrenaideneme/
 **Tasarım ilkeleri:** tek sorumluluk, arayüzlerle gevşek bağlılık (`SpeechEngine`,
 `VLMClient`), yan etkilerin thread sınırlarında tutulması, her modülün bağımsız test
 edilebilir olması.
+
+---
+
+## Giyilebilir asistan
+
+Görme engelli bireyler için "akıllı gözlük" senaryosu. Aynı çekirdek, iki mod:
+
+| Mod | Ne yapar | Gecikme |
+| --- | --- | --- |
+| **Otopilot** (Mod 1) | Her karede YOLO + kutu sezgisiyle engel taraması, banknot toplamı, kritik uyarıda sesli kesme | ~30 ms/kare |
+| **Derin analiz** (Mod 2) | Düğme/sesli komut → kare dondurulur → Vision LLM → STT veya sahne açıklaması seslendirilir → canlıya dönüş | 1–5 sn |
+
+```bash
+python -m app.main_wearable                 # kamera + otopilot + ses
+python -m app.main_wearable --bench 15      # 15 sn ölçüm: FPS + döngü tıkanması
+python -m app.main_wearable --announce-labels
+```
+
+Tuşlar: `boşluk`/`s` sahne analizi, `e` son tüketim tarihi, `o` OCR,
+`m` mod bilgisi, `t` ses aç/kapat, `q` çıkış.
+
+**Yakınlık sezgisi (derinlik yerine):** tek kamerada mutlak derinlik ölçülemez.
+Kutu yüksekliği / kare yüksekliği oranı vekil metriktir; `≥ %60` → "kritik
+yakınlık". Yanlış alarmı azaltmak için tehlike sınıfı beyaz listesi, art arda
+3 kare onayı ve etiket başına 3 sn cooldown uygulanır
+(`SPATIAL_*` değişkenleri).
+
+**Seslendirme:** `TextToSpeech` servisi kuyruk, öncelik ve **kesme (barge-in)**
+yapar: "Dikkat, araba çok yakın" sürmekte olan uzun açıklamayı anında keser.
+Motor seçenekleri: `pyttsx3-proc` (ayrı süreç, varsayılan), `pyttsx3`
+(thread içi), `gtts`, `none`.
+
+> **Ölçülen performans notu:** `pyttsx3` motorunu ana süreçte çalıştırmak,
+> ilk konuşmada ana döngüyü saniyelerce kilitleyebiliyor (GIL + COM). Süreç
+> yalıtımı bunu ortadan kaldırır. Ayrıca `stop()` çağrısı senkron yapıldığında
+> kritik uyarı anında döngü p95'i **2000 ms**'ye çıkıyordu; asenkron
+> sonlandırma sonrası p95 **~80 ms**'ye indi (14 sn koşu, ağır anons yükü).
 
 ---
 
@@ -379,8 +436,8 @@ edilebilir olması.
 | **M0** | Depo iskeleti, dokümantasyon, yapılandırma | 🟢 Tamam |
 | **M1** | Canlı YOLOv8 tespiti + HUD | 🟡 Kod hazır, donanımda doğrulandı |
 | **M2** | Ollama Vision LLM entegrasyonu | 🟡 Kod hazır, doğrulandı |
-| **M3** | Türkçe TTS + sesli geri bildirim | ⬜ Planlandı |
-| **M4** | Asenkron orkestrasyon, performans, dayanıklılık | ⬜ Planlandı |
+| **M3** | Türkçe TTS + sesli geri bildirim | 🟢 Tamam (kuyruk + barge-in) |
+| **M4** | Asenkron orkestrasyon, performans, dayanıklılık | 🟡 Kısmi (çift mod hazır) |
 | **M5** | UX, paketleme, dağıtım | ⬜ Planlandı |
 | **M6** | İleri özellikler (OCR modu, oto-tetik, kayıt) | 💡 Fikir |
 

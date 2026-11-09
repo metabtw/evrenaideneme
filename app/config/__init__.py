@@ -20,9 +20,11 @@ from .settings import (
     DetectionSettings,
     LogSettings,
     Settings,
+    SpatialSettings,
     TTSSettings,
     UISettings,
     VLMSettings,
+    WearableSettings,
     get_settings,
     reset_settings_cache,
 )
@@ -34,9 +36,11 @@ __all__ = [
     "DetectionSettings",
     "LogSettings",
     "Settings",
+    "SpatialSettings",
     "TTSSettings",
     "UISettings",
     "VLMSettings",
+    "WearableSettings",
     "get_settings",
     "reset_settings_cache",
 ]

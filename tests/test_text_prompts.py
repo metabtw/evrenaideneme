@@ -7,7 +7,6 @@ from app.analysis import AnalysisMode, VLMUnavailableError, build_prompt, create
 from app.detection.labels import ascii_label, turkish_label
 from app.tts import (
     NullSpeechEngine,
-    SpeechUnavailableError,
     create_speech_engine,
 )
 from app.utils.text import to_ascii, wrap_text
@@ -80,10 +79,11 @@ def test_null_speech_engine() -> None:
     silent.close()
 
 
-def test_real_tts_engines_are_explicitly_pending() -> None:
+def test_speech_engine_creation_never_raises() -> None:
+    """Motor kurulamasa bile uygulama düşmez: sessiz motora ya da gerçek motora düşer."""
     from app.config import TTSSettings
 
-    with pytest.raises(SpeechUnavailableError, match="M3"):
-        create_speech_engine(TTSSettings(engine="pyttsx3"))
-    with pytest.raises(SpeechUnavailableError, match="M3"):
-        create_speech_engine(TTSSettings(engine="gtts"))
+    for engine_name in ("none", "pyttsx3", "gtts"):
+        engine = create_speech_engine(TTSSettings(engine=engine_name))
+        assert hasattr(engine, "speak")
+        assert engine.name

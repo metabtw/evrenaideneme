@@ -10,10 +10,15 @@ from enum import Enum
 
 
 class AnalysisMode(str, Enum):
-    """Analiz türleri (``s`` = DESCRIBE, ``o`` = OCR)."""
+    """Analiz türleri.
+
+    ``s`` = DESCRIBE, ``o`` = OCR, ``EXPIRY`` = son tüketim tarihi (giyilebilir),
+    ``COUNT`` = nesne sayımı.
+    """
 
     DESCRIBE = "describe"
     OCR = "ocr"
+    EXPIRY = "expiry"
     COUNT = "count"
 
 
@@ -31,6 +36,13 @@ OCR = (
 COUNT_TEMPLATE = (
     "Görseldeki '{target}' nesnelerini say. "
     "Yanıtı tek satırda 'Sayı: N - kısa gerekçe' biçiminde Türkçe ver."
+)
+
+EXPIRY = (
+    "Ürün ambalajındaki son tüketim tarihini (STT / SKT) bul ve yaz. "
+    "Yalnızca tarihi şu biçimde yaz: 'GG.AA.YYYY'. "
+    "Birden fazla tarih varsa son tüketim tarihini seç, üretim tarihini yazma. "
+    "Tarih okunamıyorsa 'okunamadi' yaz; tahmin etme, uydurma."
 )
 
 _MODEL_HINTS: dict[str, str] = {
@@ -60,6 +72,8 @@ def build_prompt(
         prompt = DESCRIBE
     elif selected is AnalysisMode.OCR:
         prompt = OCR
+    elif selected is AnalysisMode.EXPIRY:
+        prompt = EXPIRY
     else:
         if not target:
             raise ValueError("COUNT modu için 'target' nesne adı gerekli")

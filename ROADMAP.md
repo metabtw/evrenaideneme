@@ -23,8 +23,8 @@ açıklama yapan bir asistana dönüştürmek. Her şey yerelde, Türkçe ve dü
 | M0 | Temel iskelet | Depo, README, ROADMAP, config, CI | 🟢 Tamam |
 | M1 | Canlı tespit | YOLOv8 + webcam + HUD, 30 FPS | 🟡 Kod hazır |
 | M2 | Derin analiz | Ollama VLM istemcisi + Türkçe prompt | 🟡 Kod hazır |
-| M3 | Sesli geri bildirim | pyttsx3/gTTS motorları | ⬜ |
-| M4 | Orkestrasyon | Thread'ler, kuyruklar, dayanıklılık | ⬜ |
+| M3 | Sesli geri bildirim | pyttsx3/gTTS motorları | 🟢 Tamam |
+| M4 | Orkestrasyon | Thread'ler, kuyruklar, dayanıklılık | 🟡 Kısmi |
 | M5 | Ürünleşme | UX, paketleme, ölçüm raporu | ⬜ |
 | M6 | İleri özellikler | OCR modu, oto-tetik, kayıt | 💡 |
 
@@ -131,16 +131,23 @@ Türkçe kalite: `llava:7b` dilbilgisi olarak zayıf (halen ROADMAP riski);
 
 **Hedef:** Yanıtı doğal Türkçe ile seslendirmek, kesilebilir şekilde.
 
-- [ ] `tts/base.py`: `SpeechEngine` protokolü (`speak`, `stop`, `is_busy`)
-- [ ] `tts/pyttsx3_engine.py`: çevrimdışı, `tr` ses seçimi, hız/volume
-- [ ] `tts/gtts_engine.py`: MP3 üretimi + oynatma, geçici dosya temizliği
-- [ ] Metin normalizasyonu: sayılar, kısaltmalar, kod bloklarının atlanması
-- [ ] Uzun yanıtları cümlelere bölüp sırayla okuma; `stop()` ile anında kesme
-- [ ] TTS yoksa sessiz mod + ekranda uyarı (uygulama çökmez)
-- [ ] Testler: metin bölme, normalizasyon; motor mock'u
+- [x] `tts/base.py`: `SpeechEngine` protokolü (`speak`, `stop`, `is_busy`)
+- [x] `tts/pyttsx3_engine.py`: çevrimdışı, `tr` ses seçimi, hız/volume
+- [ ] `tts/gtts_engine.py`: MP3 üretimi + oynatma, geçici dosya temizliği (M5)
+- [x] `tts/service.py`: `TextToSpeech` — kuyruk, öncelik, barge-in (kesme)
+- [x] `tts/subprocess_engine.py`: süreç yalıtımlı motor (GIL/COM koruması)
+- [x] Metin normalizasyonu ve markdown temizliği (`to_speech_text`)
+- [x] Uzun yanıtları cümlelere bölüp sırayla okuma; `stop()` ile anında kesme
+- [x] TTS yoksa sessiz mod + uyarı (uygulama çökmez, `NullSpeechEngine`)
+- [x] Testler: metin bölme, kuyruk/öncelik/kesme, motor mock'u
 
 **Kabul kriteri:** `s` sonrası yanıt ≤ 500 ms içinde konuşmaya başlar; `t` ile sessize
 alınır; Türkçe telaffuz anlaşılır.
+
+**Durum notu (M3):** Kod tamam (8 test dosyası içinde kuyruk/kesme senaryoları).
+Windows'ta Türkçe ses paketi yoksa motor otomatik uyarı verir ve sessiz moda
+düşmez; telaffuz bozuk olur. **Bilinen ölçüm:** `stop()` senkron yapıldığında ana
+döngü p95'i 2000 ms'ye çıkıyordu; asenkron sonlandırma ile p95 ~80 ms.
 
 **Riskler:** Windows'ta `pywin32` eksikliği; Linux'ta `espeak-ng` yokluğu.
 → README kurulum notları + başlangıçta bağımlılık kontrolü.
@@ -151,18 +158,24 @@ alınır; Türkçe telaffuz anlaşılır.
 
 **Hedef:** Ağır işler arka planda; ana döngü asla beklemez.
 
-- [ ] `state.py`: kilitli paylaşılan durum (son yanıt, durum makinesi, istatistikler)
-- [ ] `analysis/worker.py`: tek worker thread + `queue.Queue(maxsize=1)`
+- [x] `state.py`: kilitli paylaşılan durum (son yanıt, durum makinesi, istatistikler)
+- [x] `analysis/worker.py`: tek worker thread + `queue.Queue(maxsize=1)`
   - **Single-flight:** istek sürerken yeni tetik → "meşgul" geri bildirimi
   - **Latest-frame-wins:** kuyrukta bekleyen eski kare varsa yenisiyle değiştir
-- [ ] Durum makinesi: `IDLE → CAPTURING → ANALYZING → SPEAKING → IDLE`
-- [ ] Kapanış protokolü: `threading.Event` ile temiz `join`, kaynak serbest bırakma
-- [ ] Hata yönetimi: VLM/TTS hatası kullanıcıya Türkçe mesaj, döngü devam
-- [ ] `app/bench.py`: FPS, gecikme, bellek ölçümü → `reports/bench-<tarih>.json`
+- [x] Çift mod orkestrasyonu: `wearable.py` (Mod 1 otopilot / Mod 2 derin analiz)
+- [x] Kapanış protokolü: `threading.Event` ile temiz `join`, kaynak serbest bırakma
+- [x] Hata yönetimi: VLM/TTS hatası kullanıcıya Türkçe mesaj, döngü devam
+- [x] `--bench` modu: FPS + döngü tıkanması (p50/p95/max) ölçümü
+- [ ] `app/bench.py`: JSON rapor çıktısı (`reports/bench-<tarih>.json`)
 - [ ] Stres testi: 60 sn boyunca her 2 sn tetikleme, sızıntı/donma kontrolü
 
 **Kabul kriteri:** 60 sn stres testinde ana döngü ≥ 28 FPS ortalamada kalır; bellek
 artışı < %10; çıkışta asılı thread yok.
+
+**Durum notu (M4, kısmi):** Ölçüm birimi "FPS" yerine **döngü tıkanması** olarak
+değiştirildi: kamera zaten ~21 FPS'te donanımsal sınırlı, bu yüzden FPS yanıltıcı.
+14 sn'lik ağır anons koşusunda ana döngü p50 64 ms, p95 ~80 ms, max ~83 ms;
+kritik uyarı kesmesi dahil. Asılı thread yok (testlerle doğrulandı).
 
 **Riskler:** GIL ve OpenCV çizim çakışması; kuyruk taşması.
 → Kare kopyalama, kilit kapsamını dar tutma, `maxsize=1` + düşürme politikası.
