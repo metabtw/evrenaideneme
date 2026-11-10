@@ -331,6 +331,19 @@ Mimari: YOLO kutuları bulur → CLIP her kutuyu katalog sınıflarıyla puanlar
 YOLO hiç kutu bulamazsa CLIP bölge taraması (tüm kare, çeyrekler, merkez)
 devreye girer. İlk çalıştırmada CLIP ağırlığı indirilir (~350 MB, tek seferlik).
 
+**Performans (önemli):** CLIP bölge taraması CPU'da ~470 ms sürer. Her karede
+çalıştırılırsa akış **2 FPS'e düşer** (ölçüldü). Bu yüzden CLIP **kendi
+thread'inde** ve seyrek çalışır (`APP_CLIP_INTERVAL`, varsayılan 1 sn); sonuç
+önbelleğe alınır, YOLO her karede akmaya devam eder. Ölçüm:
+
+| Senaryo | FPS | Medyan | max |
+| --- | --- | --- | --- |
+| Yalnızca YOLO | 13.0 | 64 ms | 83 ms |
+| Katalog + async CLIP | 13.2 | 64 ms | 161 ms |
+| Katalog + sync CLIP | 2.0 | 496 ms | 631 ms |
+
+Bunu kapatmak için `--no-clip` kullanın.
+
 ---
 
 ## Proje Yapısı
@@ -355,7 +368,8 @@ evrenaideneme/
 │   │   ├── detector.py         # YOLOv8 tespit (saf veri, çizim yok)
 │   │   ├── clip.py             # CLIP sınıflandırıcı (açık kelime dağarcığı)
 │   │   ├── clip_region.py      # CLIP bölge taraması (kutu üretici)
-│   │   ├── hybrid.py           # YOLO + CLIP hibrit etiketleyici
+│   │   ├── hybrid.py           # YOLO + CLIP hibrit etiketleyici (seyrek/önbellekli)
+│   │   ├── hybrid_async.py     # CLIP'i ayrı thread'de çalıştırır (kasma önleme)
 │   │   ├── draw.py             # Bounding box + etiket çizimi
 │   │   ├── worker.py           # Ayrı thread, latest-frame-wins
 │   │   └── labels.py           # Etiket çözümleme (özel model adları korunur)

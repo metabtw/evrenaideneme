@@ -105,6 +105,17 @@ class DetectionWorker:
                 logger.warning("Tespit işçisi %.1f sn içinde durmadı", timeout)
         self._thread = None
 
+        # Etiketleyicinin kendi thread'i varsa onu da kapat (asılı thread bırakma).
+        tagger = self._tagger
+        closer = getattr(tagger, "stop", None) or getattr(tagger, "close", None)
+        if closer is not None:
+            try:
+                closer(timeout=timeout)
+            except TypeError:
+                closer()
+            except Exception:  # noqa: BLE001 - kapanış akışı düşürmemeli
+                logger.debug("Etiketleyici kapatılırken hata", exc_info=True)
+
     def __enter__(self) -> DetectionWorker:
         return self.start()
 

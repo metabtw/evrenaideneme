@@ -194,6 +194,8 @@ class DetectionSettings:
     catalog: str = ""
     #: CLIP'in YOLO etiketini geçersiz kılması için gereken güven.
     clip_override: float = 0.45
+    #: CLIP'in çalışma aralığı (saniye). 0 = her karede (yavaş, önerilmez).
+    clip_interval: float = 1.0
 
     @property
     def device_or_none(self) -> str | None:
@@ -220,6 +222,7 @@ class DetectionSettings:
             classes=_int_tuple(env, "APP_CLASSES"),
             catalog=_str(env, "APP_CATALOG", ""),
             clip_override=_float(env, "APP_CLIP_OVERRIDE", 0.45, minimum=0.0, maximum=1.0),
+            clip_interval=_float(env, "APP_CLIP_INTERVAL", 1.0, minimum=0.0, maximum=60.0),
         )
 
 

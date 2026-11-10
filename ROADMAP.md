@@ -138,6 +138,8 @@ COCO'nun 80 sınıfı: "kettle" COCO'da yok, "book" zor sınıf.
 - [x] `app/detection/clip.py`: CLIP sınıflandırıcı (ViT-B-32, sıfır-atış)
 - [x] `app/detection/clip_region.py`: kutu üretici olarak CLIP bölge taraması
 - [x] `app/detection/hybrid.py`: YOLO kutu + CLIP karar, güven karşılaştırmalı
+- [x] `app/detection/hybrid_async.py`: CLIP ayrı thread + seyrek çalışma
+  (senkron mod akışı 2 FPS'e düşürüyordu — ölçüldü)
 - [x] `datasets/classes.yaml`: 61 sınıflık örnek katalog
 - [x] `tools/`: Open Images eşleme/veri seti/eğitim/karşılaştırma/bench araçları
 - [x] Ölçüm: YOLO 2/6 → **hibrit 5/6** (kettle 1.00, kitap dik 0.92)
@@ -149,6 +151,12 @@ yolu seçildi; veri seti araçları hazır, ağ müsait olduğunda çalıştır�
 **Bilinen sınır:** fincan/vazo gibi görsel olarak örtüşen sınıflar sınırda
 kalıyor (vazo 0.78 / fincan 0.76). Katalogda çok benzer sınıflar varsa
 yanlış eşleşme artar (ölçüldü: vazoyu çıkarmak 4/6 → 5/6).
+
+**Performans notu (kritik):** CLIP etiketlemesi ilk sürümde her karede
+senkron çalışıyordu → **2 FPS** (kare başına 496 ms). Düzeltme: CLIP kendi
+thread'inde, `APP_CLIP_INTERVAL` (1 sn) aralığıyla ve sonuç önbelleğiyle
+çalışır. Ölçüm: katalog açık 13.2 FPS / max 161 ms, katalog kapalı 13.0 FPS /
+max 83 ms — fark yok denecek kadar az.
 
 ---
 

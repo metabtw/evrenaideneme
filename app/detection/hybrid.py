@@ -28,7 +28,10 @@ Böylece "COCO'da olmayanı CLIP ekler, COCO'da doğru olanı YOLO korur."
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -55,6 +58,12 @@ class HybridConfig:
     #: bu durumda YOLO'nun korunması yanlış sonuç veriyordu.
     clip_margin: float = 0.0
     keep_yolo_when_in_catalog: bool = True
+    #: CLIP'in çalışma aralığı (saniye). Ölçüm: bölge taraması 470 ms sürüyor;
+    #: her karede çalıştırılırsa akış 2 FPS'e düşer. Bu yüzden CLIP seyrek
+    #: çalışır, sonuç önbelleğe alınır ve YOLO her karede akmaya devam eder.
+    min_interval: float = 1.0
+    #: Ölçülen CLIP süresi bu bütçeyi aşarsa aralık otomatik büyür.
+    budget_ms: float = 400.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +75,20 @@ class HybridStats:
     yolo_kept: int = 0
     clip_failed: int = 0
     region_scans: int = 0
+    skipped: int = 0
+    last_clip_ms: float = 0.0
+    interval: float = 0.0
 
 
 class HybridTagger:
-    """YOLO tespitlerini CLIP ile iyileştirir; YOLO boşsa bölge taraması yapar."""
+    """YOLO tespitlerini CLIP ile iyileştirir; YOLO boşsa bölge taraması yapar.
+
+    **Performans kuralı:** CLIP pahalıdır (bölge taraması ~470 ms, CPU). Her
+    karede çalıştırılırsa akış 2 FPS'e düşer (ölçüldü). Bu yüzden CLIP kendi
+    temposunda çalışır (``min_interval``), sonuçlar önbelleğe alınır ve
+    YOLO her karede akmaya devam eder. Aralık, ölçülen CLIP süresine göre
+    otomatik büyür (görev döngüsü ≤ ~1/3).
+    """
 
     def __init__(
         self,
@@ -77,12 +96,21 @@ class HybridTagger:
         config: HybridConfig | None = None,
         *,
         region_detector: ClipRegionDetector | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self.classifier = classifier
         self.config = config or HybridConfig()
         self.region_detector = region_detector
+        self._clock = clock or time.monotonic
         self._stats = HybridStats()
         self._catalog_labels = {entry.tr for entry in classifier.catalog}
+
+        self._last_run = float("-inf")
+        self._interval = max(0.0, self.config.min_interval)
+        #: Son CLIP turunda üretilen tespitler (bölge taraması için).
+        self._cache: list[Detection] = []
+        #: Son CLIP turunda kutulara atanan etiketler (hızlı yol için).
+        self._label_cache: list[Detection] = []
 
     @property
     def stats(self) -> HybridStats:
@@ -92,23 +120,66 @@ class HybridTagger:
     def catalog(self) -> ClassCatalog:
         return self.classifier.catalog
 
-    def _region_fallback(self, frame: np.ndarray, detections: list[Detection]) -> list[Detection]:
+    @property
+    def interval(self) -> float:
+        """CLIP'in etkin çalışma aralığı (saniye)."""
+        return self._interval
+
+    def _should_run(self, now: float) -> bool:
+        return (now - self._last_run) >= self._interval
+
+    def _note_duration(self, elapsed_ms: float) -> None:
+        """Görev döngüsünü sınırlamak için aralığı uyarlar."""
+        base = max(0.0, self.config.min_interval)
+        # CLIP süresi bütçeyi aşıyorsa aralığı 3× süreye çıkar (döngü ≤ ~%33).
+        if elapsed_ms > self.config.budget_ms:
+            self._interval = max(base, elapsed_ms / 1000.0 * 3.0)
+        else:
+            self._interval = base
+
+    def _apply_cached_labels(self, detections: list[Detection]) -> list[Detection]:
+        """Önbellekteki etiketleri güncel kutulara IoU ile uygular."""
+        if not self._label_cache:
+            return detections
+
+        result: list[Detection] = []
+        for detection in detections:
+            match = _best_label_match(detection.box, self._label_cache)
+            result.append(match if match is not None else detection)
+        return result
+
+    def _region_fallback(
+        self, frame: np.ndarray, detections: list[Detection], now: float
+    ) -> list[Detection]:
         """YOLO boş döndüğünde bölge taramasıyla kutu üretir (pahalı yol)."""
         assert self.region_detector is not None
+        if not self._should_run(now):
+            # Henüz sıra gelmedi: son sonucu tekrar kullan (titremeyi önler).
+            return list(self._cache) if self._cache else detections
+
         found = self.region_detector.detect(frame)
-        models = {
-            "frames": self._stats.frames + 1,
-            "clip_used": self._stats.clip_used + len(found),
-            "yolo_kept": self._stats.yolo_kept,
-            "clip_failed": self._stats.clip_failed,
-            "region_scans": self._stats.region_scans + 1,
-        }
-        self._stats = HybridStats(**models)  # type: ignore[arg-type]
+        elapsed_ms = self.region_detector.last_ms
+        self._last_run = now
+        self._note_duration(elapsed_ms)
+        self._cache = found
+        self._label_cache = found
+
+        self._stats = HybridStats(
+            frames=self._stats.frames + 1,
+            clip_used=self._stats.clip_used + len(found),
+            yolo_kept=self._stats.yolo_kept,
+            clip_failed=self._stats.clip_failed,
+            region_scans=self._stats.region_scans + 1,
+            skipped=self._stats.skipped,
+            last_clip_ms=elapsed_ms,
+            interval=self._interval,
+        )
         if found:
             logger.debug(
-                "YOLO boş; bölge taraması %d nesne buldu (%.0f ms)",
+                "YOLO boş; bölge taraması %d nesne buldu (%.0f ms, aralık %.1f sn)",
                 len(found),
-                self.region_detector.last_ms,
+                elapsed_ms,
+                self._interval,
             )
         return found or detections
 
@@ -122,12 +193,25 @@ class HybridTagger:
         Returns:
             Yeni :class:`Detection` listesi (girdi değiştirilmez).
         """
-        if not detections or not self.config.enabled:
-            # YOLO hiç kutu bulamadı: bölge taramasına düş (kettle/kitap senaryosu).
-            if self.config.enabled and self.region_detector is not None and not detections:
-                return self._region_fallback(frame, detections)
+        if not self.config.enabled:
             return detections
 
+        now = self._clock()
+
+        if not detections:
+            # YOLO hiç kutu bulamadı: bölge taramasına düş (kettle/kitap senaryosu).
+            if self.region_detector is not None:
+                return self._region_fallback(frame, detections, now)
+            return detections
+
+        if not self._should_run(now):
+            # CLIP sırası gelmedi: önbellekteki etiketleri uygula (hızlı yol).
+            self._stats = _replace(
+                self._stats, frames=self._stats.frames + 1, skipped=self._stats.skipped + 1
+            )
+            return self._apply_cached_labels(detections)
+
+        started = time.perf_counter()
         frames = self._stats.frames + 1
         try:
             tagged = self.classifier.tag(frame, [d.box for d in detections])
@@ -137,6 +221,10 @@ class HybridTagger:
                 self._stats, frames=frames, clip_failed=self._stats.clip_failed + 1
             )
             return detections
+
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        self._last_run = now
+        self._note_duration(elapsed_ms)
 
         # Kutu -> CLIP sonucu
         by_box = {item.box: item for item in tagged}
@@ -181,7 +269,14 @@ class HybridTagger:
             yolo_kept=yolo_kept,
             clip_failed=self._stats.clip_failed,
             region_scans=self._stats.region_scans,
+            skipped=self._stats.skipped,
+            last_clip_ms=elapsed_ms,
+            interval=self._interval,
         )
+        # Etiket önbelleği: CLIP kararlarını sonraki karelerde yeniden kullan.
+        self._label_cache = result
+        self._cache = result
+        result = list(result)
         result.sort(key=lambda item: item.confidence, reverse=True)
         return result
 
@@ -193,9 +288,50 @@ def _replace(stats: HybridStats, **changes: object) -> HybridStats:
         "yolo_kept": stats.yolo_kept,
         "clip_failed": stats.clip_failed,
         "region_scans": stats.region_scans,
+        "skipped": stats.skipped,
+        "last_clip_ms": stats.last_clip_ms,
+        "interval": stats.interval,
     }
     data.update(changes)
     return HybridStats(**data)  # type: ignore[arg-type]
+
+
+def _best_label_match(
+    box: tuple[int, int, int, int],
+    cache: list[Detection],
+    *,
+    iou_threshold: float = 0.5,
+) -> Detection | None:
+    """Önbellekten en iyi örtüşen etiketi bulur (güncel kutuyla)."""
+    best: Detection | None = None
+    best_iou = 0.0
+    for cached in cache:
+        overlap = _iou(box, cached.box)
+        if overlap >= iou_threshold and overlap > best_iou:
+            best = cached
+            best_iou = overlap
+    if best is None:
+        return None
+    return Detection(
+        class_id=best.class_id,
+        label=best.label,
+        confidence=best.confidence,
+        box=box,
+    )
+
+
+def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_x1, inter_y1 = max(ax1, bx1), max(ay1, by1)
+    inter_x2, inter_y2 = min(ax2, bx2), min(ay2, by2)
+    if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+        return 0.0
+    inter = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
 
 
 def create_hybrid_tagger(
@@ -204,8 +340,15 @@ def create_hybrid_tagger(
     clip_override: float = DEFAULT_CLIP_OVERRIDE,
     min_confidence: float = 0.25,
     region_fallback: bool = True,
-) -> HybridTagger | None:
+    min_interval: float = 1.0,
+    background: bool = True,
+) -> Any:
     """Katalog varsa hibrit etiketleyici kurar, yoksa ``None``.
+
+    Args:
+        background: ``True`` (varsayılan) ise CLIP kendi thread'inde çalışır ve
+            ``relabel`` **hiç beklemez**. Ölçüm: senkron modda p95 512 ms
+            donma vardı; thread'e alınca ana döngü ~50 ms'de kalıyor.
 
     Hata durumunda uygulama düşmez: CLIP kurulamazsa YOLO tek başına çalışır.
     """
@@ -223,14 +366,21 @@ def create_hybrid_tagger(
         if region_fallback
         else None
     )
+    tagger = HybridTagger(
+        classifier,
+        HybridConfig(clip_override=clip_override, min_interval=min_interval),
+        region_detector=region_detector,
+    )
     logger.info(
-        "Hibrit etiketleyici hazır: %d sınıf (%s), bölge taraması=%s",
+        "Hibrit etiketleyici hazır: %d sınıf (%s), bölge taraması=%s, arka plan=%s",
         len(catalog),
         catalog_path,
         "açık" if region_fallback else "kapalı",
+        "açık" if background else "kapalı",
     )
-    return HybridTagger(
-        classifier,
-        HybridConfig(clip_override=clip_override),
-        region_detector=region_detector,
-    )
+    if not background:
+        return tagger
+
+    from app.detection.hybrid_async import AsyncHybridTagger  # noqa: PLC0415
+
+    return AsyncHybridTagger(tagger, min_interval=min_interval).start()

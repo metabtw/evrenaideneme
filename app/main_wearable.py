@@ -155,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         settings.detection.catalog_or_none,
         clip_override=settings.detection.clip_override,
         min_confidence=settings.detection.confidence,
+        min_interval=settings.detection.clip_interval,
     )
     if tagger is not None and not args.no_clip:
         logger.info("Hibrit mod: YOLO + CLIP (%d sınıf)", len(tagger.catalog))
