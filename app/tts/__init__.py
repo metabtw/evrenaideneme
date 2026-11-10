@@ -52,16 +52,23 @@ def create_speech_engine(settings: TTSSettings | None = None) -> SpeechEngine:
     if settings.engine == "none":
         return NullSpeechEngine()
 
-    if settings.engine not in ("pyttsx3", "pyttsx3-proc", "gtts"):
+    engine_name = "winrt" if settings.engine == "auto" else settings.engine
+
+    if engine_name not in ("pyttsx3", "pyttsx3-proc", "winrt", "gtts"):
         raise SpeechUnavailableError(f"Bilinmeyen TTS motoru: {settings.engine!r}")
 
     try:
-        if settings.engine == "pyttsx3-proc":
+        if engine_name == "winrt":
+            from .winrt_engine import WinRTEngine  # noqa: PLC0415
+
+            return WinRTEngine(settings)
+
+        if engine_name == "pyttsx3-proc":
             from .subprocess_engine import SubprocessSpeechEngine  # noqa: PLC0415
 
             return SubprocessSpeechEngine(settings)
 
-        if settings.engine == "pyttsx3":
+        if engine_name == "pyttsx3":
             from .pyttsx3_engine import Pyttsx3Engine  # noqa: PLC0415 - isteğe bağlı
 
             return Pyttsx3Engine(settings)

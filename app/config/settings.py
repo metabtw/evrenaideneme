@@ -190,6 +190,10 @@ class DetectionSettings:
     device: str = "auto"
     max_detections: int = 100
     classes: tuple[int, ...] = ()
+    #: CLIP kataloğu (boş = hibrit kapalı, yalnızca YOLO).
+    catalog: str = ""
+    #: CLIP'in YOLO etiketini geçersiz kılması için gereken güven.
+    clip_override: float = 0.45
 
     @property
     def device_or_none(self) -> str | None:
@@ -199,6 +203,10 @@ class DetectionSettings:
     @property
     def classes_or_none(self) -> list[int] | None:
         return list(self.classes) if self.classes else None
+
+    @property
+    def catalog_or_none(self) -> str | None:
+        return self.catalog or None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> DetectionSettings:
@@ -210,6 +218,8 @@ class DetectionSettings:
             device=_str(env, "APP_DEVICE", "auto").lower(),
             max_detections=_int(env, "APP_MAX_DETECTIONS", 100, minimum=1, maximum=1000),
             classes=_int_tuple(env, "APP_CLASSES"),
+            catalog=_str(env, "APP_CATALOG", ""),
+            clip_override=_float(env, "APP_CLIP_OVERRIDE", 0.45, minimum=0.0, maximum=1.0),
         )
 
 
@@ -271,7 +281,7 @@ class VLMSettings:
 class TTSSettings:
     """Sesli geri bildirim ayarları (M3)."""
 
-    engine: str = "pyttsx3-proc"
+    engine: str = "auto"
     language: str = "tr"
     rate: int = 180
     volume: float = 1.0
@@ -282,8 +292,8 @@ class TTSSettings:
             engine=_choice(
                 env,
                 "TTS_ENGINE",
-                "pyttsx3-proc",
-                frozenset({"pyttsx3", "pyttsx3-proc", "gtts", "none"}),
+                "auto",
+                frozenset({"auto", "winrt", "pyttsx3", "pyttsx3-proc", "gtts", "none"}),
             ),
             language=_str(env, "TTS_LANGUAGE", "tr"),
             rate=_int(env, "TTS_RATE", 180, minimum=50, maximum=400),

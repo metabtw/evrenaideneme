@@ -1,0 +1,76 @@
+"""Kullanıcı sınıf kataloğu (örnek).
+
+Kendi listenizi bu dosyada düzenleyin; uygulama ``APP_CATALOG`` ile okur.
+
+    python -m app.main_wearable --catalog datasets/classes.yaml
+
+Biçim:
+    0: türkçe ad                  # İngilizce istem otomatik tamamlanır
+    1: {tr: ad, en: prompt, hazard: true, min_confidence: 0.3}
+
+``en`` alanı CLIP için **İngilizce** doğal cümle olmalı ("a book",
+"an electric kettle"); CLIP İngilizce eğitildiği için Türkçe istem zayıf çalışır.
+"""
+
+names:
+  0: su ısıtıcısı
+  1: kitap
+  2: fincan
+  3: dizüstü bilgisayar
+  4: şarap kadehi
+  5: şişe
+  6: kalem
+  7: telefon
+  8: bilgisayar faresi
+  9: klavye
+  10: monitör
+  11: kulaklık
+  12: tablet
+  13: hesap makinesi
+  14: makas
+  15: defter
+  16: sandalye
+  17: masa
+  18: kase
+  19: tabak
+  20: kaşık
+  21: çatal
+  22: bıçak
+  23: tava
+  24: kavanoz
+  25: teneke kutu
+  26: su bardağı
+  27: termos
+  28: elma
+  29: muz
+  30: portakal
+  31: sandviç
+  32: pizza
+  33: ekmek
+  34: yumurta
+  35: domates
+  36: havuç
+  37: cüzdan
+  38: sırt çantası
+  39: bavul
+  40: anahtar
+  41: kol saati
+  42: gözlük
+  43: şemsiye
+  44: diş fırçası
+  45: havlu
+  46: koltuk
+  47: yatak
+  48: lamba
+  49: televizyon
+  50: çöp kovası
+  51: saksı bitkisi
+  52: vazo
+  53: kitaplık
+  54: tabure
+  55: ayakkabı
+  56: otomobil
+  57: bisiklet
+  58: köpek
+  59: kedi
+  60: banknot

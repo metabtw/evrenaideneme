@@ -25,7 +25,7 @@ from typing import Any, Protocol
 import numpy as np
 
 from app.config import DetectionSettings
-from app.detection.labels import turkish_label
+from app.detection.labels import resolve_label
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -140,11 +140,16 @@ class ObjectDetector:
 
     # -- tespit ------------------------------------------------------------
 
-    def detect(self, frame: np.ndarray) -> list[Detection]:
+    def detect(self, frame: np.ndarray, *, class_agnostic: bool = False) -> list[Detection]:
         """Bir BGR karesinde nesne tespiti yapar.
 
         Args:
             frame: ``(H, W, 3)`` uint8 BGR kare.
+            class_agnostic: ``True`` ise modelin sınıf etiketleri **yok sayılır**
+                ve tüm kutular ``nesne`` etiketiyle döner. CLIP ile yeniden
+                etiketleme (bkz. :class:`app.detection.clip.ClipClassifier`)
+                için kullanılır: kutu kalitesi aynı kalır, sınıf kararı CLIP'e
+                bırakılır.
 
         Returns:
             Güven eşiğini geçen tespitler; güvenli biçimde azalan sırada.
@@ -168,7 +173,7 @@ class ObjectDetector:
                 imgsz=self.settings.image_size,
                 device=self.settings.device_or_none,
                 max_det=self.settings.max_detections,
-                classes=self.settings.classes_or_none,
+                classes=None if class_agnostic else self.settings.classes_or_none,
                 verbose=False,
             )
         except Exception as exc:  # noqa: BLE001
@@ -176,9 +181,11 @@ class ObjectDetector:
 
         if not results:
             return []
-        return self._parse_result(results[0])
+        return self._parse_result(results[0], class_agnostic=class_agnostic)
 
-    def _parse_result(self, result: _ResultLike) -> list[Detection]:
+    def _parse_result(
+        self, result: _ResultLike, *, class_agnostic: bool = False
+    ) -> list[Detection]:
         boxes = getattr(result, "boxes", None)
         if boxes is None or len(boxes) == 0:
             return []
@@ -201,8 +208,12 @@ class ObjectDetector:
             detections.append(
                 Detection(
                     class_id=int(class_id),
-                    label=turkish_label(
-                        int(class_id), names.get(int(class_id), f"sinif-{class_id}")
+                    label=(
+                        "nesne"
+                        if class_agnostic
+                        else resolve_label(
+                            int(class_id), names.get(int(class_id), f"sinif-{class_id}")
+                        )
                     ),
                     confidence=float(confidence),
                     box=(x1, y1, x2, y2),

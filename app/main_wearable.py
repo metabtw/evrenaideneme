@@ -32,6 +32,7 @@ from app.analysis import AnalysisMode, AnalysisWorker, create_vlm_client
 from app.camera import CameraError, CameraStream, list_cameras
 from app.config import Settings, get_settings
 from app.detection import DetectionWorker, ObjectDetector
+from app.detection.hybrid import create_hybrid_tagger
 from app.modes import AutopilotMode
 from app.tts import Priority, create_tts
 from app.ui.wearable_hud import draw_wearable_hud
@@ -50,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-gui", action="store_true", help="Pencere açma (başsız)")
     parser.add_argument("--no-tts", action="store_true", help="Sesi kapat")
     parser.add_argument("--no-vlm", action="store_true", help="Vision LLM'i kapat")
+    parser.add_argument(
+        "--catalog",
+        help="Sınıf kataloğu (örn. datasets/classes.yaml) — YOLO+CLIP hibrit modu",
+    )
+    parser.add_argument("--no-clip", action="store_true", help="Hibrit CLIP etiketlemeyi kapat")
     parser.add_argument("--list-cameras", action="store_true", help="Kameraları listele")
     parser.add_argument("--camera-index", type=int, help="Kamera indeksi")
     parser.add_argument("--model", help="YOLO ağırlığı (örn. models/evrenaidd-v1.pt)")
@@ -93,6 +99,8 @@ def _apply_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
         camera = replace(camera, index=args.camera_index)
     if args.model:
         detection = replace(detection, model_path=args.model)
+    if args.catalog:
+        detection = replace(detection, catalog=args.catalog)
     if args.confidence is not None:
         if not 0.0 <= args.confidence <= 1.0:
             raise SystemExit("--confidence 0.0 ile 1.0 arasında olmalı")
@@ -143,7 +151,16 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     camera = CameraStream(settings.camera)
-    detection_worker = DetectionWorker(detector)
+    tagger = create_hybrid_tagger(
+        settings.detection.catalog_or_none,
+        clip_override=settings.detection.clip_override,
+        min_confidence=settings.detection.confidence,
+    )
+    if tagger is not None and not args.no_clip:
+        logger.info("Hibrit mod: YOLO + CLIP (%d sınıf)", len(tagger.catalog))
+    else:
+        tagger = None
+    detection_worker = DetectionWorker(detector, tagger=tagger)
     autopilot = AutopilotMode(
         tts,
         settings=settings.spatial,

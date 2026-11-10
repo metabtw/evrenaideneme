@@ -146,6 +146,8 @@ flowchart LR
 | TTS | `pyttsx3` (varsayılan) / `gTTS` | Türkçe ses `tr` |
 | Yapılandırma | `python-dotenv` + dataclass | Sırlar repoda tutulmaz |
 | Loglama | `logging` (rotating file) | `logs/app.log` |
+| Açık kelime dağarcığı | CLIP (`open-clip-torch`, ViT-B-32) | COCO'da olmayan sınıflar için |
+| Türkçe ses (Windows) | WinRT `SpeechSynthesis` | OneCore sesleri (Tolga) |
 
 ---
 
@@ -299,6 +301,36 @@ python -m app.analyze --image mutfak.jpg --mode count --target bardak
 python -m app.analyze --image kare.jpg --json      # makine okunur çıktı
 ```
 
+### Kendi nesne kataloğunuz (COCO'da olmayan sınıflar)
+
+COCO modeli `su ısıtıcısı` gibi sınıfları **bilmez** (COCO'da yok) ve `kitap`'ı
+dik/yatık duruşlarda kaçırır. Ölçüm (6 test görseli):
+
+| Yaklaşım | Doğru |
+| --- | --- |
+| YOLOv8n (COCO) | 2/6 |
+| YOLOv8m (10× yavaş) | 2/6 |
+| CLIP tek başına (bölge taraması) | 6/6 |
+| **YOLO + CLIP hibrit** | **5/6** |
+
+Kendi listenizi `datasets/classes.yaml` içinde tanımlayın (Türkçe ad yeterli;
+CLIP için İngilizce istem otomatik tamamlanır), sonra:
+
+```bash
+python -m app.main_wearable --catalog datasets/classes.yaml
+```
+
+```yaml
+names:
+  0: su ısıtıcısı
+  1: kitap
+  2: {tr: fincan, en: a coffee cup, hazard: true}
+```
+
+Mimari: YOLO kutuları bulur → CLIP her kutuyu katalog sınıflarıyla puanlar.
+YOLO hiç kutu bulamazsa CLIP bölge taraması (tüm kare, çeyrekler, merkez)
+devreye girer. İlk çalıştırmada CLIP ağırlığı indirilir (~350 MB, tek seferlik).
+
 ---
 
 ## Proje Yapısı
@@ -313,6 +345,7 @@ evrenaideneme/
 │   ├── main_wearable.py        # Giyilebilir giriş noktası (otopilot + derin)
 │   ├── wearable.py             # WearableAssistant: mod orkestratörü
 │   ├── analyze.py              # Tek görsel analizi CLI (--image, --check)
+│   ├── catalog.py              # Kullanıcı sınıf kataloğu (TR ad + EN istem)
 │   ├── state.py                # Kilitli paylaşılan durum (AppState)
 │   ├── config/
 │   │   └── settings.py         # .env -> dataclass ayarlar + doğrulama
@@ -320,9 +353,12 @@ evrenaideneme/
 │   │   └── stream.py           # Thread tabanlı VideoCapture sarmalayıcı
 │   ├── detection/
 │   │   ├── detector.py         # YOLOv8 tespit (saf veri, çizim yok)
+│   │   ├── clip.py             # CLIP sınıflandırıcı (açık kelime dağarcığı)
+│   │   ├── clip_region.py      # CLIP bölge taraması (kutu üretici)
+│   │   ├── hybrid.py           # YOLO + CLIP hibrit etiketleyici
 │   │   ├── draw.py             # Bounding box + etiket çizimi
 │   │   ├── worker.py           # Ayrı thread, latest-frame-wins
-│   │   └── labels.py           # COCO -> Türkçe sınıf adları
+│   │   └── labels.py           # Etiket çözümleme (özel model adları korunur)
 │   ├── spatial/
 │   │   └── analyzer.py         # Kutu sezgisiyle yakınlık/engel uyarısı
 │   ├── modes/
@@ -337,6 +373,7 @@ evrenaideneme/
 │   │   ├── service.py          # TextToSpeech: kuyruk, kesme, tekrar bastırma
 │   │   ├── pyttsx3_engine.py   # Thread içi motor
 │   │   ├── subprocess_engine.py# Süreç yalıtımlı motor (GIL koruması)
+│   │   ├── winrt_engine.py     # Windows OneCore Türkçe ses (Tolga)
 │   │   ├── gtts_engine.py      # Bulut TTS (opsiyonel)
 │   │   └── null_engine.py      # Sessiz motor
 │   ├── ui/
@@ -350,6 +387,11 @@ evrenaideneme/
 │   ├── test_config.py
 │   ├── test_camera_stream.py
 │   ├── test_detector.py
+│   ├── test_labels.py
+│   ├── test_catalog.py
+│   ├── test_clip.py
+│   ├── test_clip_region.py
+│   ├── test_hybrid.py
 │   ├── test_worker.py
 │   ├── test_analysis_worker.py
 │   ├── test_vlm_client.py
@@ -360,6 +402,16 @@ evrenaideneme/
 │   ├── test_draw_overlay.py
 │   ├── test_text_prompts.py
 │   └── test_main.py
+├── tools/
+│   ├── map_openimages.py       # Open Images sınıf eşlemesi
+│   ├── build_dataset.py        # Open Images -> YOLO veri seti
+│   ├── train.py                # Özel YOLO eğitimi
+│   ├── compare_models.py       # Model karşılaştırma
+│   ├── bench_clip.py           # CLIP doğruluk ölçümü
+│   ├── bench_clip_region.py    # Bölge taraması ölçümü
+│   └── bench_hybrid.py         # Hibrit mod ölçümü
+├── datasets/
+│   └── classes.yaml            # Kullanıcı sınıf kataloğu
 ├── assets/
 ├── pyproject.toml              # pytest + ruff yapılandırması
 ├── CONTRIBUTING.md
@@ -403,8 +455,14 @@ yakınlık". Yanlış alarmı azaltmak için tehlike sınıfı beyaz listesi, ar
 
 **Seslendirme:** `TextToSpeech` servisi kuyruk, öncelik ve **kesme (barge-in)**
 yapar: "Dikkat, araba çok yakın" sürmekte olan uzun açıklamayı anında keser.
-Motor seçenekleri: `pyttsx3-proc` (ayrı süreç, varsayılan), `pyttsx3`
-(thread içi), `gtts`, `none`.
+Motor seçenekleri: `auto` (Windows'ta WinRT, diğerlerinde pyttsx3-proc),
+`winrt`, `pyttsx3-proc`, `pyttsx3`, `gtts`, `none`.
+
+> **Windows Türkçe ses notu:** Ayarlar > Konuşma'dan eklenen Türkçe sesler
+> **OneCore** deposuna kurulur; `pyttsx3` yalnızca **SAPI5** deposunu okur ve
+> Türkçe sesi görmez (ölçüldü: SAPI5'te yalnızca Zira/İngilizce, OneCore'da
+> Tolga/tr-TR). Bu yüzden varsayılan motor `winrt`'tir — aynı sesi çevrimdışı
+> ve doğru telaffuzla kullanır.
 
 > **Ölçülen performans notu:** `pyttsx3` motorunu ana süreçte çalıştırmak,
 > ilk konuşmada ana döngüyü saniyelerce kilitleyebiliyor (GIL + COM). Süreç

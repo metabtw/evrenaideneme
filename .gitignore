@@ -55,3 +55,10 @@ htmlcov/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# --- Yerel benchmark / veri seti çýktýlarý ---
+bench_images/
+datasets/.cache/
+datasets/evrenaidd/
+models/
+runs/

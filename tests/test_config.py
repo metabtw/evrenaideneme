@@ -27,7 +27,7 @@ def test_defaults_are_safe(empty_env: Path) -> None:
     assert settings.detection.classes == ()
     assert settings.vlm.provider == "ollama"
     assert settings.vlm.host == "http://localhost:11434"
-    assert settings.tts.engine == "pyttsx3-proc"
+    assert settings.tts.engine == "auto"
     assert settings.ui.trigger_key == "s"
     assert settings.log.level == "INFO"
     assert settings.loaded_env_file == empty_env

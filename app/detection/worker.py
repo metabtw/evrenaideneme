@@ -14,6 +14,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -58,10 +59,12 @@ class DetectionWorker:
         self,
         detector: ObjectDetector,
         *,
+        tagger: Any | None = None,
         name: str = "evrenaidd-detection",
         copy_frames: bool = True,
     ) -> None:
         self._detector = detector
+        self._tagger = tagger
         self._name = name
         self._copy_frames = copy_frames
 
@@ -181,6 +184,8 @@ class DetectionWorker:
             started = time.perf_counter()
             try:
                 detections = self._detector.detect(frame)
+                if self._tagger is not None:
+                    detections = self._tagger.relabel(frame, detections)
             except Exception as exc:  # noqa: BLE001 - işçi asla ölmemeli
                 with self._condition:
                     self._last_error = str(exc)

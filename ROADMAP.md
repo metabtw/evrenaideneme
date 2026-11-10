@@ -23,6 +23,7 @@ açıklama yapan bir asistana dönüştürmek. Her şey yerelde, Türkçe ve dü
 | M0 | Temel iskelet | Depo, README, ROADMAP, config, CI | 🟢 Tamam |
 | M1 | Canlı tespit | YOLOv8 + webcam + HUD, 30 FPS | 🟡 Kod hazır |
 | M2 | Derin analiz | Ollama VLM istemcisi + Türkçe prompt | 🟡 Kod hazır |
+| M2.5 | Sınıf kapsamı | CLIP kataloğu + hibrit etiketleme | 🟢 Tamam |
 | M3 | Sesli geri bildirim | pyttsx3/gTTS motorları | 🟢 Tamam |
 | M4 | Orkestrasyon | Thread'ler, kuyruklar, dayanıklılık | 🟡 Kısmi |
 | M5 | Ürünleşme | UX, paketleme, ölçüm raporu | ⬜ |
@@ -124,6 +125,30 @@ Türkçe kalite: `llava:7b` dilbilgisi olarak zayıf (halen ROADMAP riski);
 
 **Riskler:** Model VRAM'i aşarsa yavaşlar; `llava` Türkçede zayıf kalabilir.
 → Varsayılan `qwen2.5vl:7b`, alternatif `llava:7b`; model seçimi `.env`'de.
+
+---
+
+## M2.5 — Sınıf Kapsamı (COCO dışı nesneler)
+
+**Sorun:** Ölçüldü — `yolov8n` su ısıtıcısı ve kitap (dik) için **hiç kutu
+üretmiyor**; `yolov8m` de üretmiyor ama 10× yavaş. Sebep kapasite değil,
+COCO'nun 80 sınıfı: "kettle" COCO'da yok, "book" zor sınıf.
+
+- [x] `app/catalog.py`: kullanıcı sınıf kataloğu (TR ad + EN istem, hazard bayrağı)
+- [x] `app/detection/clip.py`: CLIP sınıflandırıcı (ViT-B-32, sıfır-atış)
+- [x] `app/detection/clip_region.py`: kutu üretici olarak CLIP bölge taraması
+- [x] `app/detection/hybrid.py`: YOLO kutu + CLIP karar, güven karşılaştırmalı
+- [x] `datasets/classes.yaml`: 61 sınıflık örnek katalog
+- [x] `tools/`: Open Images eşleme/veri seti/eğitim/karşılaştırma/bench araçları
+- [x] Ölçüm: YOLO 2/6 → **hibrit 5/6** (kettle 1.00, kitap dik 0.92)
+
+**Durum notu:** Open Images indirmesi bu ağda başarısız (467 görselden 392'si
+inmedi, Flickr kaynakları ölü). Bu yüzden eğitim yerine **eğitimsiz CLIP**
+yolu seçildi; veri seti araçları hazır, ağ müsait olduğunda çalıştırılabilir.
+
+**Bilinen sınır:** fincan/vazo gibi görsel olarak örtüşen sınıflar sınırda
+kalıyor (vazo 0.78 / fincan 0.76). Katalogda çok benzer sınıflar varsa
+yanlış eşleşme artar (ölçüldü: vazoyu çıkarmak 4/6 → 5/6).
 
 ---
 
